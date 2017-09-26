@@ -1,7 +1,5 @@
 #include "syncpoint.h"
 
-#include <pthread.h>
-
 // Function Define
 
 uint64_t _sp_number_of_segment(uint64_t number);
