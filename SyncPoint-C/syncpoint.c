@@ -10,6 +10,8 @@ void _sp_point_free(void *p);
 
 int _sp_update_sync_id(sp_client *client, uint64_t sync_id);
 
+int _sp_update_client_number(sp_client *client, uint64_t number);
+
 int _sp_add_anonymous_point(sp_client *client, uint64_t serial_number, const cp_buf *data);
 
 int _sp_add_point(sp_client *client, uint64_t number, const cp_buf *data);
@@ -53,6 +55,28 @@ int _sp_update_sync_id(sp_client *client, uint64_t sync_id){
         return SP_ERROR;
     }
     rc = sqlite3_bind_int64(stmt, 1, sync_id);
+    if(rc != SQLITE_OK){
+        sqlite3_finalize(stmt);
+        return SP_ERROR;
+    }
+    rc = sqlite3_step(stmt);
+    if(rc != SQLITE_OK && rc != SQLITE_DONE){
+        sqlite3_finalize(stmt);
+        return SP_ERROR;
+    }
+    sqlite3_finalize(stmt);
+    return CP_OK;
+}
+
+int _sp_update_client_number(sp_client *client, uint64_t number){
+    char *sql = "INSERT OR REPLACE INTO SP_CLIENT_NUMBER (SCOPE, NUMBER) VALUES (\"client\", ?);";
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(client->db, sql, -1, &stmt, NULL);
+    if(rc != SQLITE_OK){
+        sqlite3_finalize(stmt);
+        return SP_ERROR;
+    }
+    rc = sqlite3_bind_int64(stmt, 1, number);
     if(rc != SQLITE_OK){
         sqlite3_finalize(stmt);
         return SP_ERROR;
@@ -307,6 +331,10 @@ void _sp_parse_body_callback(const cp_buf *payload, void *p){
                 return;
             }
             client->number = obj.sn;
+            rc = _sp_update_client_number(client, client->number);
+            if(rc){
+                return;
+            }
             if(new_points->size > 0){
                 need_sync = true;
             }
@@ -352,6 +380,10 @@ int sp_client_init(sp_client **client, sp_client_options *opts){
 
     // Create database structure
     char *sql = 
+                "CREATE TABLE IF NOT EXISTS SP_CLIENT_NUMBER(" \
+                "SCOPE          TEXT PRIMARY KEY    NOT NULL," \
+                "NUMBER         INTEGER             NOT NULL" \
+                "); " \
                 "CREATE TABLE IF NOT EXISTS SP_SYNCID(" \
                 "SCOPE          TEXT PRIMARY KEY    NOT NULL," \
                 "SYNCID         INTEGER             NOT NULL" \
@@ -411,7 +443,7 @@ int sp_client_init(sp_client **client, sp_client_options *opts){
     sqlite3_finalize(stmt);
 
     // Fill number into SP_CLIENT
-    sql = "SELECT MAX(NUMBER) FROM SP_POINTS LIMIT 1;";
+    sql = "SELECT NUMBER FROM SP_CLIENT_NUMBER WHERE SCOPE = \"client\" LIMIT 1;";
     rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if(rc != SQLITE_OK){
         free(*client);
@@ -555,7 +587,11 @@ int sp_add_point(sp_client *client, const cp_buf *data){
             return SP_ERROR;
         }
     } else {
-        rc = _sp_add_point(client, ++(client->number), data);
+        rc = _sp_update_client_number(client, ++(client->number));
+        if(rc){
+            return SP_ERROR;
+        }
+        rc = _sp_add_point(client, client->number, data);
         if(rc){
             return SP_ERROR;
         }
